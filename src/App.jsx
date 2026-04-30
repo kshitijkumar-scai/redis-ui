@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Sun, Moon, RefreshCw } from "lucide-react"; // eslint-disable-line
 import KeyList from "./components/KeyList";
 import KeyViewer from "./components/KeyViewer";
 import AddKeyModal from "./components/AddKeyModal";
@@ -8,12 +10,46 @@ import "./App.css";
 
 const API = "/api";
 
+// ── Loading Screen ─────────────────────────────────────────────────────────────
+function HexLoader() {
+  return (
+    <div className="hex-loader">
+      {Array.from({ length: 9 }).map((_, i) => (
+        <motion.span
+          key={i}
+          className="hex-loader-cell"
+          animate={{ opacity: [0.1, 1, 0.1], scale: [0.7, 1.15, 0.7] }}
+          transition={{
+            duration: 1.8,
+            repeat: Infinity,
+            delay: ((i % 3) + Math.floor(i / 3)) * 0.14,
+            ease: "easeInOut",
+          }}
+        >
+          ⬡
+        </motion.span>
+      ))}
+    </div>
+  );
+}
+
+// ── App ────────────────────────────────────────────────────────────────────────
 export default function App() {
+  // Theme
+  const [theme, setTheme] = useState(() => localStorage.getItem("rdm-theme") || "dark");
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("rdm-theme", theme);
+  }, [theme]);
+
+  // App state
+  const [appReady, setAppReady]       = useState(false);
   const [serverInfo, setServerInfo]   = useState(null);
   const [connected, setConnected]     = useState(null);
   const [checkingConn, setCheckingConn] = useState(false);
   const [connections, setConnections] = useState([]);
   const [keys, setKeys]               = useState([]);
+  const [listKey, setListKey]         = useState(0);
   const [cursor, setCursor]           = useState("0");
   const [hasMore, setHasMore]         = useState(false);
   const [pattern, setPattern]         = useState("*");
@@ -23,6 +59,7 @@ export default function App() {
   const [loadingKey, setLoadingKey]   = useState(false);
   const [showAddModal, setShowAddModal]   = useState(false);
   const [showConnModal, setShowConnModal] = useState(false);
+  const [switching, setSwitching]     = useState(false);
   const [toast, setToast]             = useState(null);
 
   const showToast = (msg, type = "success") => {
@@ -30,7 +67,7 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ── Connections ───────────────────────────────────────────────────────────
+  // ── Connections ──────────────────────────────────────────────────────────────
   const loadConnections = useCallback(async () => {
     try {
       const data = await fetch(`${API}/connections`).then((r) => r.json());
@@ -39,15 +76,21 @@ export default function App() {
   }, []);
 
   const switchConnection = async (id) => {
+    setSwitching(true);
     try {
       const data = await fetch(`${API}/connections/${id}/activate`, { method: "PUT" }).then((r) => r.json());
       if (data.connections) setConnections(data.connections);
+      const switched = data.connections?.find((c) => c.id === id);
       setSelectedKey(null);
       setKeyData(null);
       setKeys([]);
       await checkConnection();
+      await loadKeys("*", true);
+      showToast(`Switched to ${switched?.name ?? "connection"}`);
     } catch (err) {
       showToast(err.message, "error");
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -72,7 +115,7 @@ export default function App() {
     } catch {}
   };
 
-  // ── Connection check ──────────────────────────────────────────────────────
+  // ── Connection check ─────────────────────────────────────────────────────────
   const checkConnection = useCallback(async () => {
     setCheckingConn(true);
     try {
@@ -87,12 +130,13 @@ export default function App() {
       setConnected(false);
     } finally {
       setCheckingConn(false);
+      setAppReady(true);
     }
   }, [loadConnections]);
 
   useEffect(() => { checkConnection(); }, [checkConnection]);
 
-  // ── Load keys ─────────────────────────────────────────────────────────────
+  // ── Load keys ────────────────────────────────────────────────────────────────
   const loadKeys = useCallback(async (pat = pattern, reset = true) => {
     setLoadingKeys(true);
     try {
@@ -102,16 +146,17 @@ export default function App() {
       setKeys((prev) => reset ? data.keys : [...prev, ...data.keys]);
       setCursor(data.cursor);
       setHasMore(data.cursor !== "0");
+      if (reset) setListKey((k) => k + 1);
     } catch (err) {
       showToast(err.message, "error");
     } finally {
       setLoadingKeys(false);
     }
-  }, [pattern, cursor]);
+  }, [pattern, cursor]); // eslint-disable-line
 
   useEffect(() => { if (connected) loadKeys(pattern, true); }, [connected]); // eslint-disable-line
 
-  // ── Load single key ───────────────────────────────────────────────────────
+  // ── Load single key ──────────────────────────────────────────────────────────
   const loadKey = useCallback(async (key) => {
     setSelectedKey(key);
     setLoadingKey(true);
@@ -128,7 +173,7 @@ export default function App() {
     }
   }, []);
 
-  // ── Key ops ───────────────────────────────────────────────────────────────
+  // ── Key ops ──────────────────────────────────────────────────────────────────
   const deleteKey = async (key) => {
     await fetch(`${API}/key/${encodeURIComponent(key)}`, { method: "DELETE" });
     showToast(`Deleted "${key}"`);
@@ -210,91 +255,158 @@ export default function App() {
   };
 
   return (
-    <div className="app">
-      {/* ── Header ── */}
-      <header className="header">
-        <div className="header-brand">
-          <div className="header-icon-wrap">⬡</div>
-          <div>
-            <div className="header-title">Redis Manager</div>
-            <div className="header-subtitle">Key inspector &amp; editor</div>
+    <>
+      {/* ── App loading overlay ── */}
+      <AnimatePresence>
+        {!appReady && (
+          <motion.div
+            className="app-loading"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.45, ease: "easeInOut" } }}
+          >
+            <HexLoader />
+            <motion.div
+              className="app-loading-text"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35 }}
+            >
+              <div className="app-loading-title">Redis Manager</div>
+              <div className="app-loading-sub">Connecting to server…</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="app">
+        {/* ── Header ── */}
+        <header className="header">
+          <div className="header-brand">
+            <div className="header-icon-wrap">⬡</div>
+            <div>
+              <div className="header-title">Redis Manager</div>
+              <div className="header-subtitle">Key inspector &amp; editor</div>
+            </div>
           </div>
-        </div>
 
-        <div className="header-meta">
-          {serverInfo && (
-            <span className="header-stat">
-              v{serverInfo.version} · {serverInfo.dbsize} keys
-            </span>
-          )}
+          <div className="header-meta">
+            {serverInfo && (
+              <span className="header-stat">
+                <span className="stat-dot" />
+                v{serverInfo.version} · {serverInfo.dbsize} keys
+              </span>
+            )}
 
-          <ConnectionSwitcher
-            connections={connections}
-            onAdd={() => setShowConnModal(true)}
-            onSwitch={switchConnection}
-            onRemove={removeConnection}
-            onRename={renameConnection}
+            <ConnectionSwitcher
+              connections={connections}
+              switching={switching}
+              onAdd={() => setShowConnModal(true)}
+              onSwitch={switchConnection}
+              onRemove={removeConnection}
+              onRename={renameConnection}
+            />
+
+            <motion.button
+              className="icon-btn btn btn-ghost"
+              onClick={checkConnection}
+              title="Refresh connection"
+              disabled={checkingConn}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.92 }}
+            >
+              <motion.span
+                animate={checkingConn ? { rotate: 360 } : { rotate: 0 }}
+                transition={checkingConn ? { repeat: Infinity, duration: 0.7, ease: "linear" } : {}}
+                style={{ display: "inline-flex", alignItems: "center" }}
+              >
+                <RefreshCw size={14} />
+              </motion.span>
+            </motion.button>
+
+            <motion.button
+              className="theme-toggle"
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.92 }}
+            >
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={theme}
+                  initial={{ rotate: -30, opacity: 0 }}
+                  animate={{ rotate: 0, opacity: 1 }}
+                  exit={{ rotate: 30, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  style={{ display: "inline-flex", alignItems: "center" }}
+                >
+                  {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                </motion.span>
+              </AnimatePresence>
+            </motion.button>
+          </div>
+        </header>
+
+        <div className="workspace">
+          <KeyList
+            keys={keys}
+            listKey={listKey}
+            loading={loadingKeys}
+            pattern={pattern}
+            hasMore={hasMore}
+            selectedKey={selectedKey}
+            onPatternChange={(p) => { setPattern(p); loadKeys(p, true); }}
+            onSelect={loadKey}
+            onRefresh={() => loadKeys(pattern, true)}
+            onLoadMore={() => loadKeys(pattern, false)}
+            onDelete={deleteSelected}
+            onAddKey={() => setShowAddModal(true)}
           />
 
-          <button
-            className="btn btn-ghost icon-btn"
-            onClick={checkConnection}
-            title="Refresh"
-            disabled={checkingConn}
-          >
-            <span className={checkingConn ? "is-spinning" : ""}>↻</span>
-          </button>
+          <KeyViewer
+            keyData={keyData}
+            loading={loadingKey}
+            selectedKey={selectedKey}
+            onDelete={deleteKey}
+            onUpdateTtl={updateTtl}
+            onSubOp={subOp}
+            onRefresh={() => selectedKey && loadKey(selectedKey)}
+            onRename={renameKey}
+            onClone={cloneKey}
+            showToast={showToast}
+          />
         </div>
-      </header>
 
-      <div className="workspace">
-        <KeyList
-          keys={keys}
-          loading={loadingKeys}
-          pattern={pattern}
-          hasMore={hasMore}
-          selectedKey={selectedKey}
-          onPatternChange={(p) => { setPattern(p); loadKeys(p, true); }}
-          onSelect={loadKey}
-          onRefresh={() => loadKeys(pattern, true)}
-          onLoadMore={() => loadKeys(pattern, false)}
-          onDelete={deleteSelected}
-          onAddKey={() => setShowAddModal(true)}
-        />
+        {showAddModal && (
+          <AddKeyModal onSave={addKey} onClose={() => setShowAddModal(false)} />
+        )}
 
-        <KeyViewer
-          keyData={keyData}
-          loading={loadingKey}
-          selectedKey={selectedKey}
-          onDelete={deleteKey}
-          onUpdateTtl={updateTtl}
-          onSubOp={subOp}
-          onRefresh={() => selectedKey && loadKey(selectedKey)}
-          onRename={renameKey}
-          onClone={cloneKey}
-          showToast={showToast}
-        />
+        {showConnModal && (
+          <ConnectionModal
+            onClose={() => setShowConnModal(false)}
+            onConnected={(conns) => {
+              if (conns) setConnections(conns);
+              showToast("Connected!");
+              checkConnection();
+              loadKeys("*", true);
+            }}
+          />
+        )}
+
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              key={toast.msg}
+              className={`toast toast-${toast.type}`}
+              initial={{ opacity: 0, y: 24, scale: 0.92 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.95 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {toast.type === "success" ? "✓" : "✕"} {toast.msg}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-
-      {showAddModal && (
-        <AddKeyModal onSave={addKey} onClose={() => setShowAddModal(false)} />
-      )}
-
-      {showConnModal && (
-        <ConnectionModal
-          onClose={() => setShowConnModal(false)}
-          onConnected={(conns) => {
-            if (conns) setConnections(conns);
-            showToast("Connected!");
-            checkConnection();
-            loadKeys("*", true);
-          }}
-        />
-      )}
-
-      {toast && (
-        <div className={`toast toast-${toast.type}`}>{toast.msg}</div>
-      )}
-    </div>
+    </>
   );
 }

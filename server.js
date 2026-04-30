@@ -1,6 +1,10 @@
 import express from "express";
 import cors from "cors";
 import Redis from "ioredis";
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   setClient,
   get, set, del, ttl, type, rename,
@@ -15,7 +19,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ─── Connection Registry ──────────────────────────────────────────────────────
+if (process.env.NODE_ENV === "production") {
+  app.use(express.static(path.join(__dirname, "dist")));
+}
+
 
 const registry = new Map(); // id -> { id, name, host, port, db, tls, username, url, client }
 let activeId = null;
@@ -50,6 +57,14 @@ function getActiveClient() {
   return conn.client;
 }
 
+function uniqueLabel(base) {
+  const existing = new Set([...registry.values()].map((c) => c.name));
+  if (!existing.has(base)) return base;
+  let i = 2;
+  while (existing.has(`${base} (${i})`)) i++;
+  return `${base} (${i})`;
+}
+
 async function addConnection({ name, host, port = 6379, username = "", password = "", db = 0, tls = false }, activate = true) {
   const url = buildUrl({ host, port, username, password, db, tls });
   const client = new Redis(url, {
@@ -79,7 +94,8 @@ async function addConnection({ name, host, port = 6379, username = "", password 
   }
 
   const id = `conn_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
-  const label = name?.trim() || `${host}:${port}`;
+  const baseLabel = name?.trim() || `${host}:${port}${Number(db) !== 0 ? `/db${db}` : ""}`;
+  const label = uniqueLabel(baseLabel);
   registry.set(id, { id, name: label, host, port: Number(port), username, db: Number(db), tls, url, client });
 
   if (activate || registry.size === 1) {
@@ -98,15 +114,10 @@ try {
   console.warn("[Redis] Default connection failed:", err.message, "— connect via UI");
 }
 
-// ─── Connection APIs ──────────────────────────────────────────────────────────
-
-// GET /api/connections — list all connections
 app.get("/api/connections", (_req, res) => {
   res.json(serializeAll());
 });
 
-// POST /api/connections — add a new connection
-// body: { name, host, port, username?, password?, db?, tls?, activate? }
 app.post("/api/connections", async (req, res) => {
   const { name, host, port = 6379, username = "", password = "", db = 0, tls = false, activate = true } = req.body;
   if (!host) return res.status(400).json({ error: "host is required" });
@@ -118,7 +129,6 @@ app.post("/api/connections", async (req, res) => {
   }
 });
 
-// PUT /api/connections/:id/activate — switch active connection
 app.put("/api/connections/:id/activate", (req, res) => {
   const conn = registry.get(req.params.id);
   if (!conn) return res.status(404).json({ error: "Connection not found" });
@@ -127,7 +137,6 @@ app.put("/api/connections/:id/activate", (req, res) => {
   res.json({ ok: true, connections: serializeAll() });
 });
 
-// DELETE /api/connections/:id — remove a connection
 app.delete("/api/connections/:id", async (req, res) => {
   const { id } = req.params;
   if (id === activeId) return res.status(400).json({ error: "Cannot remove the active connection. Switch first." });
@@ -138,7 +147,6 @@ app.delete("/api/connections/:id", async (req, res) => {
   res.json({ ok: true, connections: serializeAll() });
 });
 
-// PATCH /api/connections/:id — rename a connection label
 app.patch("/api/connections/:id", (req, res) => {
   const conn = registry.get(req.params.id);
   if (!conn) return res.status(404).json({ error: "Connection not found" });
@@ -146,7 +154,6 @@ app.patch("/api/connections/:id", (req, res) => {
   res.json({ ok: true, connections: serializeAll() });
 });
 
-// Legacy: kept for backward compat (now maps to add+activate)
 app.post("/api/connect", async (req, res) => {
   const { host, port = 6379, username = "", password = "", db = 0, tls = false } = req.body;
   if (!host) return res.status(400).json({ error: "host is required" });
@@ -158,14 +165,11 @@ app.post("/api/connect", async (req, res) => {
   }
 });
 
-// GET /api/connection — current active connection info (for ConnectionModal)
 app.get("/api/connection", (_req, res) => {
   const conn = registry.get(activeId);
   if (!conn) return res.json({});
   res.json({ host: conn.host, port: conn.port, username: conn.username, db: conn.db, tls: conn.tls, url: conn.url });
 });
-
-// ─── Health / Info ────────────────────────────────────────────────────────────
 
 app.get("/api/ping", async (_req, res) => {
   try {
@@ -192,8 +196,6 @@ app.get("/api/info", async (_req, res) => {
     res.status(503).json({ error: err.message });
   }
 });
-
-// ─── Keys ─────────────────────────────────────────────────────────────────────
 
 app.get("/api/keys", async (req, res) => {
   try {
@@ -222,8 +224,6 @@ app.delete("/api/keys", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// ─── Single Key ───────────────────────────────────────────────────────────────
 
 app.get("/api/key/:key", async (req, res) => {
   try {
@@ -308,8 +308,6 @@ app.post("/api/key/:key/clone", async (req, res) => {
   }
 });
 
-// ─── Hash ─────────────────────────────────────────────────────────────────────
-
 app.post("/api/key/:key/hash", async (req, res) => {
   try { await hset(req.params.key, { [req.body.field]: req.body.value }); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
@@ -319,8 +317,6 @@ app.delete("/api/key/:key/hash/:field", async (req, res) => {
   try { await hdel(req.params.key, req.params.field); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-// ─── List ─────────────────────────────────────────────────────────────────────
 
 app.post("/api/key/:key/list", async (req, res) => {
   try {
@@ -335,8 +331,6 @@ app.delete("/api/key/:key/list", async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Set ──────────────────────────────────────────────────────────────────────
-
 app.post("/api/key/:key/set", async (req, res) => {
   try { await sadd(req.params.key, req.body.member); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
@@ -346,8 +340,6 @@ app.delete("/api/key/:key/set", async (req, res) => {
   try { await srem(req.params.key, req.body.member); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-// ─── Sorted Set ───────────────────────────────────────────────────────────────
 
 app.post("/api/key/:key/zset", async (req, res) => {
   try { await getActiveClient().zadd(req.params.key, req.body.score, req.body.member); res.json({ ok: true }); }
@@ -359,7 +351,13 @@ app.delete("/api/key/:key/zset", async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+if (process.env.NODE_ENV === "production") {
+  app.get("*", (req, res) => {
+    if (!req.path.startsWith("/api")) {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    }
+  });
+}
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Redis API server → http://localhost:${PORT}`));

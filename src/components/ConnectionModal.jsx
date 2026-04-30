@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { motion } from "framer-motion";
+import { Server, Eye, EyeOff, X, Plug } from "lucide-react";
 
 export default function ConnectionModal({ onClose, onConnected }) {
   const [name, setName]           = useState("");
@@ -43,13 +45,21 @@ export default function ConnectionModal({ onClose, onConnected }) {
 
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal conn-modal">
+      <motion.div
+        className="modal conn-modal"
+        initial={{ scale: 0.94, opacity: 0, y: 16 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.94, opacity: 0 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+      >
         <div className="modal-header">
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div className="header-icon-wrap" style={{ width: 26, height: 26, fontSize: 13 }}>⬡</div>
+            <div className="header-icon-wrap" style={{ width: 26, height: 26, fontSize: 12 }}>⬡</div>
             <h2>New Connection</h2>
           </div>
-          <button className="btn btn-ghost icon-btn" onClick={onClose}>✕</button>
+          <motion.button className="btn btn-ghost icon-btn" onClick={onClose} whileTap={{ scale: 0.9 }}>
+            <X size={15} />
+          </motion.button>
         </div>
 
         <div className="modal-body">
@@ -69,34 +79,15 @@ export default function ConnectionModal({ onClose, onConnected }) {
           <div className="conn-row">
             <div className="conn-field" style={{ flex: 3 }}>
               <label className="field-label">Host</label>
-              <input
-                className="modal-input"
-                placeholder="localhost"
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-              />
+              <input className="modal-input" placeholder="localhost" value={host} onChange={(e) => setHost(e.target.value)} />
             </div>
             <div className="conn-field" style={{ flex: 1 }}>
               <label className="field-label">Port</label>
-              <input
-                className="modal-input"
-                type="number"
-                placeholder="6379"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-              />
+              <input className="modal-input" type="number" placeholder="6379" value={port} onChange={(e) => setPort(e.target.value)} />
             </div>
             <div className="conn-field" style={{ flex: 1 }}>
               <label className="field-label">Database</label>
-              <input
-                className="modal-input"
-                type="number"
-                min="0"
-                max="15"
-                placeholder="0"
-                value={db}
-                onChange={(e) => setDb(e.target.value)}
-              />
+              <input className="modal-input" type="number" min="0" max="15" placeholder="0" value={db} onChange={(e) => setDb(e.target.value)} />
             </div>
           </div>
 
@@ -104,12 +95,7 @@ export default function ConnectionModal({ onClose, onConnected }) {
           <div className="conn-row">
             <div className="conn-field" style={{ flex: 1 }}>
               <label className="field-label">Username <span className="field-hint">(optional)</span></label>
-              <input
-                className="modal-input"
-                placeholder="default"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
+              <input className="modal-input" placeholder="default" value={username} onChange={(e) => setUsername(e.target.value)} />
             </div>
             <div className="conn-field" style={{ flex: 1 }}>
               <label className="field-label">Password <span className="field-hint">(optional)</span></label>
@@ -124,7 +110,7 @@ export default function ConnectionModal({ onClose, onConnected }) {
                   style={{ paddingRight: 36 }}
                 />
                 <button className="pass-toggle" onClick={() => setShowPass((v) => !v)} tabIndex={-1} type="button">
-                  {showPass ? "🙈" : "👁"}
+                  {showPass ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
               </div>
             </div>
@@ -136,7 +122,7 @@ export default function ConnectionModal({ onClose, onConnected }) {
             <span>Use TLS / SSL (<code>rediss://</code>)</span>
           </label>
 
-          {/* URL Preview */}
+          {/* URL preview */}
           <div className="url-preview">
             <span className="url-preview-label">URL preview</span>
             <code className="url-preview-value">
@@ -146,16 +132,22 @@ export default function ConnectionModal({ onClose, onConnected }) {
             </code>
           </div>
 
-          {error && <div className="field-error">{error}</div>}
+          {error && (
+            <div className="field-error">
+              <Server size={13} /> {error}
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleConnect} disabled={loading}>
-            {loading ? "Connecting…" : "Connect"}
-          </button>
+          <motion.button className="btn btn-ghost" onClick={onClose} whileTap={{ scale: 0.97 }}>
+            <X size={13} /> Cancel
+          </motion.button>
+          <motion.button className="btn btn-primary" onClick={handleConnect} disabled={loading} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+            <Plug size={13} /> {loading ? "Connecting…" : "Connect"}
+          </motion.button>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
